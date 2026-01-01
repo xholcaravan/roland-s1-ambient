@@ -1,0 +1,24 @@
+# Phase 1 Configuration
+# Auto-Loading Crossfader
+
+audio:
+  sample_rate: 44100
+  buffer_size: 1024
+  channels: 2
+
+files:
+  ambient_dir: "samples/ambient/"
+  rhythm_dir: "samples/rhythm/"
+  preload_count: 2  # Keep current + next 2 files in RAM
+
+crossfader:
+  knob: 1  # Which Roland S-1 knob controls crossfade
+  curve: linear  # Volume curve: linear or exponential
+
+display:
+  update_rate: 10  # Hz - how often to update terminal
+  show_next_files: true
+
+midi:
+  port_name: "Roland S-1"  # Will be auto-detected
+  channel: 1
