@@ -1,0 +1,9 @@
+Crossfade test for test_audio_2.wav
+Crossfade: 3000ms
+Loops: 3
+Generated: 2026-01-02 14:04:52
+
+Start: 0.000s (sample 0)
+Loop 1 crossfade start: 6.376s (sample 281192)
+Loop 2 crossfade start: 9.752s (sample 430084)
+End: 13.129s (sample 578976)

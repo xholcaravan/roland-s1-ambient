@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""
+Interactive Crossfade Loop Tester with File Selection
+"""
+
+import os
+import sys
+import json
+import time
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
+import select
+import tty
+import termios
+
+class CrossfadeTester:
+    def __init__(self):
+        self.sample_rate = 44100
+        self.audio_data = None
+        self.position = 0
+        self.crossfade_ms = 1000
+        self.is_playing = False
+        self.filename = ""
+        self.file_duration = 0
+        self.continuous_mode = False
+        self.play_once_mode = False
+        self.loops_completed = 0
+        self.running = True
+        self.old_termios = None
+        
+        print("\n" + "="*60)
+        print("INTERACTIVE CROSSFADE LOOP TESTER")
+        print("="*60)
+    
+    def list_audio_files(self, directory):
+        """List all audio files in directory with durations."""
+        files = []
+        if os.path.exists(directory):
+            for f in sorted(os.listdir(directory)):
+                if f.lower().endswith(('.wav', '.mp3', '.flac', '.ogg')):
+                    path = os.path.join(directory, f)
+                    try:
+                        data, sr = sf.read(path)
+                        duration = len(data) / sr
+                        files.append((f, duration, path))
+                    except:
+                        files.append((f, 0, path))
+        return files
+    
+    def select_file(self):
+        """Let user select an audio file to test."""
+        directory = "samples/real_test"
+        files = self.list_audio_files(directory)
+        
+        if not files:
+            print(f"\n❌ No audio files found in {directory}/")
+            print("Please place your test files there.")
+            print("\nCreating a test tone...")
+            self.create_test_tone()
+            files = self.list_audio_files(directory)
+            if not files:
+                return False
+        
+        print(f"\nAudio files in {directory}/:")
+        for i, (name, duration, path) in enumerate(files, 1):
+            print(f"[{i}] {name} ({duration:.1f}s)")
+        
+        print(f"[{len(files)+1}] Quit")
+        
+        while True:
+            try:
+                choice = input(f"\nSelect file (1-{len(files)+1}): ").strip()
+                if not choice:
+                    continue
+                
+                if choice.lower() == 'q':
+                    return False
+                
+                choice_idx = int(choice) - 1
+                
+                if choice_idx == len(files):
+                    return False  # Quit option
+                
+                if 0 <= choice_idx < len(files):
+                    name, duration, path = files[choice_idx]
+                    return self.load_file(path, name, duration)
+                
+                print(f"Please enter 1-{len(files)+1}")
+                
+            except (ValueError, KeyboardInterrupt):
+                print("Invalid selection")
+                return False
+    
+    def create_test_tone(self):
+        """Create a test tone if no files exist."""
+        directory = "samples/real_test"
+        os.makedirs(directory, exist_ok=True)
+        
+        # Generate a simple test tone
+        duration = 5  # seconds
+        t = np.linspace(0, duration, int(self.sample_rate * duration))
+        
+        # Create a more interesting tone with envelope
+        freq1 = 440  # Hz (A4)
+        freq2 = 550  # Hz (C#5)
+        
+        # Main tone with slight vibrato
+        vibrato = 0.01 * np.sin(2 * np.pi * 5 * t)  # 5Hz vibrato
+        tone1 = 0.25 * np.sin(2 * np.pi * (freq1 + freq1 * vibrato) * t)
+        tone2 = 0.15 * np.sin(2 * np.pi * freq2 * t)
+        
+        # Apply envelope to avoid clicks
+        envelope = np.ones_like(t)
+        attack_len = int(0.05 * self.sample_rate)  # 50ms attack
+        release_len = int(0.1 * self.sample_rate)  # 100ms release
+        
+        envelope[:attack_len] = np.linspace(0, 1, attack_len)
+        envelope[-release_len:] = np.linspace(1, 0, release_len)
+        
+        audio = (tone1 + tone2) * envelope
+        audio_stereo = np.column_stack((audio, audio))
+        
+        test_file = os.path.join(directory, "test_tone.wav")
+        sf.write(test_file, audio_stereo, self.sample_rate)
+        print(f"Created {test_file}")
+    
+    def load_file(self, filepath, filename, duration):
+        """Load an audio file."""
+        try:
+            print(f"\nLoading {filename}...")
+            data, sr = sf.read(filepath, always_2d=True)
+            
+            # Resample if needed
+            if sr != self.sample_rate:
+                print(f"Resampling {sr}Hz → {self.sample_rate}Hz")
+                scale = self.sample_rate / sr
+                new_length = int(len(data) * scale)
+                indices = np.linspace(0, len(data)-1, new_length).astype(int)
+                data = data[indices]
+            
+            # Ensure stereo
+            if data.shape[1] == 1:
+                data = np.column_stack((data, data))
+            
+            # Store
+            self.audio_data = data
+            self.filename = filename
+            self.file_duration = duration
+            self.position = 0
+            self.loops_completed = 0
+            
+            # Load existing config if available
+            config_path = filepath.replace('.wav', '.txt').replace('.mp3', '.txt').replace('.flac', '.txt').replace('.ogg', '.txt')
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r') as f:
+                        config = json.load(f)
+                        if 'crossfade_ms' in config:
+                            self.crossfade_ms = config['crossfade_ms']
+                            print(f"Loaded saved crossfade: {self.crossfade_ms}ms")
+                except:
+                    print("Could not load config, using default")
+            
+            print(f"✅ Loaded: {filename}")
+            print(f"   Duration: {duration:.1f} seconds")
+            print(f"   Crossfade: {self.crossfade_ms}ms")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error loading {filepath}: {e}")
+            return False
+    
+    def save_config(self):
+        """Save current crossfade to .txt file."""
+        if not self.filename:
+            return
+        
+        # Find the original file path
+        directory = "samples/real_test"
+        for f in os.listdir(directory):
+            if f == self.filename:
+                filepath = os.path.join(directory, f)
+                config_path = filepath.replace('.wav', '.txt').replace('.mp3', '.txt').replace('.flac', '.txt').replace('.ogg', '.txt')
+                
+                config = {
+                    "crossfade_ms": self.crossfade_ms,
+                    "strategy": "crossfade",
+                    "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "note": f"Starts fading {self.crossfade_ms/1000:.1f}s before end"
+                }
+                
+                try:
+                    with open(config_path, 'w') as f:
+                        json.dump(config, f, indent=2)
+                    print(f"\n💾 Saved crossfade {self.crossfade_ms}ms to {os.path.basename(config_path)}")
+                except Exception as e:
+                    print(f"Error saving config: {e}")
+                break
+    
+    def audio_callback(self, outdata, frames, time, status):
+        """Audio callback for crossfade looping."""
+        if status:
+            print(f"Audio status: {status}")
+        
+        if self.audio_data is None or not self.is_playing:
+            outdata[:] = np.zeros((frames, 2), dtype=np.float32)
+            return
+        
+        crossfade_samples = int(self.crossfade_ms * self.sample_rate / 1000)
+        total_samples = len(self.audio_data)
+        
+        # Initialize output
+        output = np.zeros((frames, 2), dtype=np.float32)
+        
+        for i in range(frames):
+            current_pos = self.position % total_samples
+            
+            # Check if we're in crossfade region
+            remaining = total_samples - (self.position % total_samples)
+            if remaining <= crossfade_samples and crossfade_samples > 0:
+                # In crossfade region
+                fade_pos = crossfade_samples - remaining
+                t = fade_pos / crossfade_samples if crossfade_samples > 0 else 0
+                
+                # End of current loop (fading out)
+                sample_end = self.audio_data[current_pos]
+                
+                # Start of next loop (fading in) - wrap around
+                next_pos = fade_pos % total_samples
+                sample_start = self.audio_data[next_pos]
+                
+                # Crossfade mix
+                output[i] = sample_end * (1 - t) + sample_start * t
+            else:
+                # Normal playback
+                output[i] = self.audio_data[current_pos]
+            
+            self.position += 1
+            
+            # Check if we completed a loop
+            if self.position % total_samples == 0 and self.position > 0:
+                self.loops_completed += 1
+                
+                # Stop if in play-once mode
+                if self.play_once_mode and self.loops_completed >= 1:
+                    self.is_playing = False
+                    self.play_once_mode = False
+                    # Fill rest with silence
+                    if i + 1 < frames:
+                        output[i+1:] = 0
+                    break
+        
+        outdata[:] = output
+    
+    def adjust_crossfade(self, delta_ms):
+        """Adjust crossfade time."""
+        old_ms = self.crossfade_ms
+        new_ms = max(0, min(30000, self.crossfade_ms + delta_ms))
+        
+        if new_ms != old_ms:
+            self.crossfade_ms = new_ms
+            self.save_config()
+            return True
+        
+        return False
+    
+    def display_status(self):
+        """Display current testing status."""
+        os.system('clear' if os.name == 'posix' else 'cls')
+        
+        print("\n" + "="*60)
+        print(f"TESTING: {self.filename}")
+        print("="*60)
+        
+        if self.audio_data is not None:
+            pos_seconds = self.position / self.sample_rate
+            print(f"Duration: {self.file_duration:.1f} seconds")
+            print(f"Position: {pos_seconds:.1f}s")
+            print(f"Loops completed: {self.loops_completed}")
+            print(f"Crossfade: {self.crossfade_ms}ms (starts {self.crossfade_ms/1000:.1f}s before end)")
+        
+        print("="*60)
+        print("CONTROLS:")
+        print("  ↑/↓: Adjust crossfade ±100ms")
+        print("  U/D: Adjust crossfade ±1000ms")
+        print("  P:   Play/Pause")
+        print("  L:   Play loop once (hear crossfade)")
+        print("  C:   Continuous play")
+        print("  R:   Reset playback position")
+        print("  S:   Save current crossfade to file")
+        print("  N:   New file")
+        print("  Q:   Quit")
+        print("="*60)
+        
+        if self.is_playing:
+            if self.play_once_mode:
+                print("⏵ Playing ONCE (will stop after loop)")
+            elif self.continuous_mode:
+                print("⏵ CONTINUOUS play")
+            else:
+                print("⏵ Playing")
+        else:
+            print("⏸ Paused")
+        
+        print("\nPress key: ", end='', flush=True)
+    
+    def setup_terminal(self):
+        """Setup terminal for single-character input."""
+        self.old_termios = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
+    
+    def restore_terminal(self):
+        """Restore terminal settings."""
+        if self.old_termios:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_termios)
+    
+    def handle_key(self, key):
+        """Handle keyboard input."""
+        # Arrow keys (escape sequences)
+        if key == '\x1b':
+            next1 = sys.stdin.read(1)
+            next2 = sys.stdin.read(1)
+            if next1 == '[':
+                if next2 == 'A':  # Up arrow
+                    if self.adjust_crossfade(100):
+                        print(f" ↑ Crossfade: {self.crossfade_ms}ms")
+                elif next2 == 'B':  # Down arrow
+                    if self.adjust_crossfade(-100):
+                        print(f" ↓ Crossfade: {self.crossfade_ms}ms")
+            return
+        
+        # Regular keys
+        if key == 'q':
+            self.running = False
+        
+        elif key == 'p':
+            self.is_playing = not self.is_playing
+            self.continuous_mode = False
+            self.play_once_mode = False
+            print(f" {'⏵ Playing' if self.is_playing else '⏸ Paused'}")
+        
+        elif key == 'l':  # Play once
+            self.is_playing = True
+            self.continuous_mode = False
+            self.play_once_mode = True
+            self.loops_completed = 0
+            print(" ⏵ Playing ONCE (will stop after loop)")
+        
+        elif key == 'c':  # Continuous
+            self.is_playing = True
+            self.continuous_mode = True
+            self.play_once_mode = False
+            print(" ⏵ CONTINUOUS play")
+        
+        elif key == 'r':  # Reset position
+            self.position = 0
+            self.loops_completed = 0
+            print(" ↺ Reset position to start")
+        
+        elif key == 's':  # Save
+            self.save_config()
+        
+        elif key == 'n':  # New file
+            self.is_playing = False
+            if self.select_file():
+                self.display_status()
+        
+        elif key == 'u':  # Big increase
+            if self.adjust_crossfade(1000):
+                print(f" ↗ Crossfade: {self.crossfade_ms}ms")
+        
+        elif key == 'd':  # Big decrease
+            if self.adjust_crossfade(-1000):
+                print(f" ↘ Crossfade: {self.crossfade_ms}ms")
+        
+        elif key == ' ':
+            self.is_playing = not self.is_playing
+            print(f" {'⏵ Playing' if self.is_playing else '⏸ Paused'}")
+    
+    def run(self):
+        """Main interactive loop."""
+        # Setup terminal
+        self.setup_terminal()
+        
+        try:
+            # Select initial file
+            if not self.select_file():
+                return
+            
+            # Setup audio stream
+            self.stream = sd.OutputStream(
+                samplerate=self.sample_rate,
+                blocksize=1024,
+                channels=2,
+                callback=self.audio_callback,
+                dtype=np.float32
+            )
+            self.stream.start()
+            
+            # Main interactive loop
+            last_display = time.time()
+            
+            while self.running:
+                # Display status periodically
+                if time.time() - last_display > 0.1:
+                    self.display_status()
+                    last_display = time.time()
+                
+                # Check for keyboard input
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    key = sys.stdin.read(1).lower()
+                    self.handle_key(key)
+                
+                # If continuous mode and not playing, restart
+                if (self.continuous_mode and 
+                    not self.is_playing and 
+                    self.audio_data is not None):
+                    self.position = 0
+                    self.loops_completed = 0
+                    self.is_playing = True
+            
+            # Cleanup
+            self.stream.stop()
+            self.stream.close()
+            
+        except KeyboardInterrupt:
+            print("\n\nInterrupted by user")
+        except Exception as e:
+            print(f"\nError: {e}")
+        finally:
+            self.restore_terminal()
+            print("\nGoodbye!\n")
+
+def main():
+    tester = CrossfadeTester()
+    tester.run()
+
+if __name__ == "__main__":
+    main()
