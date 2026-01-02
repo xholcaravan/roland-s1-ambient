@@ -192,17 +192,44 @@ class CrossfadeTesterWithLabels:
             print(f"\nLoading {filename}...")
             data, sr = sf.read(filepath, always_2d=True)
             
-            # === APPLY -3dB PEAK NORMALIZATION ===
+            # === APPLY RMS NORMALIZATION ===
             print(f"  Original peak: {np.max(np.abs(data)):.3f}")
-            
-            # Peak normalize to -3dB (0.707)
-            peak = np.max(np.abs(data))
-            target_peak = 0.707  # -3dB
-            
-            if peak > 0:
-                gain_change_db = 20 * np.log10(target_peak / peak)
-                data = data * (target_peak / peak)
-                print(f"  Normalized to: {np.max(np.abs(data)):.3f} ({gain_change_db:.1f}dB change)")
+
+            # Calculate RMS (perceived loudness)
+            rms = np.sqrt(np.mean(data**2))
+            target_rms = 0.2  # Same as your batch script
+
+            if rms > 0.0001:  # Avoid silence
+                # Calculate scaling
+                scale = target_rms / rms
+                
+                # Limit excessive gain (max 20dB)
+                max_gain_db = 20
+                max_scale = 10**(max_gain_db/20)
+                
+                if scale > max_scale:
+                    print(f"  ⚠️  Would need {20*np.log10(scale):.1f}dB gain, limiting to {max_gain_db}dB")
+                    scale = max_scale
+                
+                # Apply normalization
+                data = data * scale
+                
+                # Safety: prevent clipping
+                peak = np.max(np.abs(data))
+                if peak > 0.95:
+                    safety_scale = 0.95 / peak
+                    data = data * safety_scale
+                    scale = scale * safety_scale
+                
+                gain_change_db = 20 * np.log10(scale)
+                new_rms = np.sqrt(np.mean(data**2))
+                
+                print(f"  Original RMS: {rms:.4f}")
+                print(f"  New RMS: {new_rms:.4f}")
+                print(f"  Gain change: {gain_change_db:.1f}dB")
+                print(f"  Final peak: {np.max(np.abs(data)):.3f}")
+            else:
+                print(f"  ⚠️  Very quiet file, skipping normalization")
             # === END NORMALIZATION ===
             
             # Resample if needed
