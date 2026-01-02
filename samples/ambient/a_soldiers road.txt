@@ -1,0 +1,7 @@
+{
+  "crossfade_ms": 5000,
+  "strategy": "pre-render",
+  "saved_at": "2026-01-02 15:48:28",
+  "buffer_loops": 10,
+  "note": "Pre-rendered buffer guarantees perfect crossfades"
+}

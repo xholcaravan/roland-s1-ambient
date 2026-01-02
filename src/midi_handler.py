@@ -7,12 +7,19 @@ Uses simulated input for development, can switch to real hardware later.
 import sys
 import threading
 import time
+import select
+import tty
+import termios
 
 class MidiHandler:
     """MIDI handler with simulation for development."""
     
     def __init__(self, use_simulation=True):
         self.use_simulation = use_simulation
+        
+        # Terminal settings for raw input
+        self.old_settings = None
+        self.running = True
         
         if use_simulation:
             print("Using SIMULATED MIDI controls")
@@ -24,8 +31,7 @@ class MidiHandler:
     
     def _init_simulation(self):
         """Initialize simulated MIDI controls."""
-        self.knob_values = {1: 64, 2: 64, 3: 64, 4: 64}  # Middle
-        self.running = True
+        self.knob_values = {1: 64, 2: 64, 3: 64, 4: 64}  # Middle (64 = 50%)
         
         print("\n" + "="*50)
         print("SIMULATED ROLAND S-1 CONTROLS")
@@ -39,6 +45,10 @@ class MidiHandler:
         print("="*50)
         print("\nWaiting for input...")
         
+        # Set terminal to raw mode for immediate key reading
+        self.old_settings = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
+        
         # Start input thread
         self.input_thread = threading.Thread(target=self._input_loop, daemon=True)
         self.input_thread.start()
@@ -47,12 +57,13 @@ class MidiHandler:
         """Read keyboard input in background."""
         while self.running:
             try:
-                import select
+                # Use select to check if input is available (non-blocking)
                 if select.select([sys.stdin], [], [], 0.1)[0]:
                     key = sys.stdin.read(1).lower()
                     self._handle_key(key)
-            except:
-                pass
+            except Exception as e:
+                print(f"Input error: {e}")
+                break
             time.sleep(0.01)
     
     def _handle_key(self, key):
@@ -122,33 +133,29 @@ class MidiHandler:
         return True
     
     def close(self):
-        """Clean up."""
+        """Clean up and restore terminal."""
         self.running = False
         if self.input_thread.is_alive():
             self.input_thread.join(timeout=0.1)
+        
+        # Restore terminal settings
+        if self.old_settings:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
 
 if __name__ == "__main__":
     # Test the handler
-    import tty, termios
-    
     print("Testing MIDI Handler...")
     
-    old_settings = termios.tcgetattr(sys.stdin)
-    try:
-        tty.setcbreak(sys.stdin.fileno())
-        
-        handler = MidiHandler()
-        
-        print("\nTesting for 10 seconds...")
-        print("Try pressing A/D to control KNOB 1")
-        
-        start = time.time()
-        while time.time() - start < 10 and handler.running:
-            time.sleep(0.1)
-        
-        handler.close()
-        
-    finally:
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+    handler = MidiHandler()
+    
+    print("\nTesting for 10 seconds...")
+    print("Try pressing A/D to control KNOB 1")
+    print("Press Q to quit early")
+    
+    start = time.time()
+    while time.time() - start < 10 and handler.running:
+        time.sleep(0.1)
+    
+    handler.close()
     
     print("\nTest complete!")
