@@ -192,6 +192,19 @@ class CrossfadeTesterWithLabels:
             print(f"\nLoading {filename}...")
             data, sr = sf.read(filepath, always_2d=True)
             
+            # === APPLY -3dB PEAK NORMALIZATION ===
+            print(f"  Original peak: {np.max(np.abs(data)):.3f}")
+            
+            # Peak normalize to -3dB (0.707)
+            peak = np.max(np.abs(data))
+            target_peak = 0.707  # -3dB
+            
+            if peak > 0:
+                gain_change_db = 20 * np.log10(target_peak / peak)
+                data = data * (target_peak / peak)
+                print(f"  Normalized to: {np.max(np.abs(data)):.3f} ({gain_change_db:.1f}dB change)")
+            # === END NORMALIZATION ===
+            
             # Resample if needed
             if sr != self.sample_rate:
                 print(f"Resampling {sr}Hz → {self.sample_rate}Hz")
