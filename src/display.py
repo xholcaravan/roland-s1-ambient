@@ -107,7 +107,7 @@ class Display:
         filled = int(value * width)
         bar = '█' * filled + '░' * (width - filled)
         percentage = int(value * 100)
-        return f"[{bar}] {percentage:3}%"
+        return f"[{bar}] {percentage:3d}%"
     
     def _draw_crossfader_bar(self, value, width=30):
         """Draw a crossfader visualization."""

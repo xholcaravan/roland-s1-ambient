@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Roland S-1 Ambient Controller with Delay/Reverb Effects
+and 4-BUFFER SYSTEM for glitch-free track switching
 
 Main entry point for the application.
 """
@@ -18,7 +19,7 @@ def signal_handler(sig, frame):
 def main():
     print("🎹 Roland S-1 Ambient/Rhythm Controller")
     print("=" * 50)
-    print("WITH DELAY & REVERB EFFECTS")
+    print("WITH 4-BUFFER SYSTEM (glitch-free switching)")
     print("=" * 50)
     
     # Handle Ctrl+C
@@ -83,31 +84,47 @@ def main():
         print(f"✅ Found {len(ambient_files)} ambient files")
         print(f"✅ Found {len(rhythm_files)} rhythm files")
         
-        # Load first files
+        # Load first ambient file (to current buffer)
         ambient_info = file_mgr.get_random_ambient()
         rhythm_info = file_mgr.get_random_rhythm()
         
         if ambient_info:
             filename, crossfade_ms, filepath = ambient_info
             print(f"  🎹 Ambient: {filename} (xfade: {crossfade_ms}ms)")
-            engine.load_audio_file(ambient_info, 'ambient')
+            engine.load_initial_ambient(ambient_info)
         else:
             print("⚠️  Failed to load ambient file!")
         
         if rhythm_info:
             filename, crossfade_ms, filepath = rhythm_info
             print(f"  🥁 Rhythm: {filename} (xfade: {crossfade_ms}ms)")
-            engine.load_audio_file(rhythm_info, 'rhythm')
+            engine.load_initial_rhythm(rhythm_info)
         else:
             print("⚠️  Failed to load rhythm file!")
         
-        # Update display with initial filenames
-        display.update_files(ambient_info[0] if ambient_info else None, rhythm_info[0] if rhythm_info else None)
+        # Pre-load next tracks immediately
+        print("\n📥 Pre-loading next tracks...")
+        next_ambient = file_mgr.get_random_ambient()
+        next_rhythm = file_mgr.get_random_rhythm()
+        
+        if next_ambient and next_ambient != ambient_info:
+            engine.preload_next_ambient(next_ambient)
+            print(f"  🎹 Next ambient ready: {next_ambient[0]}")
+        
+        if next_rhythm and next_rhythm != rhythm_info:
+            engine.preload_next_rhythm(next_rhythm)
+            print(f"  🥁 Next rhythm ready: {next_rhythm[0]}")
         
         # Set initial state (100% ambient, effects off)
         engine.set_crossfader(0.0)  # 100% ambient
         engine.set_delay_amount(0.0)  # Delay off
         engine.set_reverb_amount(0.0)  # Reverb off
+        
+        # Update display with initial filenames
+        display.update_files(
+            ambient_info[0] if ambient_info else None,
+            rhythm_info[0] if rhythm_info else None
+        )
         
         print("\nStarting display...")
         display.start()
@@ -125,32 +142,49 @@ def main():
         print("  ESC: Quit program")
         print("  Ctrl+C: Emergency quit")
         print("="*50)
+        print("\n📢 4-BUFFER SYSTEM ACTIVE:")
+        print("  • Current tracks playing")
+        print("  • Next tracks pre-loaded (no glitch on switch)")
+        print("="*50)
         
-        # Track previous crossfader position for auto-load detection
+        # Track previous crossfader position for pre-load detection
         prev_crossfader = 0.0
         
         # Keep running until Ctrl+C or MIDI handler says to quit
         try:
             while midi.running:
-                # Check for auto-load conditions (when channel becomes silent)
-                if engine.crossfader >= 0.95 and prev_crossfader < 0.95:
-                    # Ambient is silent (or nearly silent), load new ambient
-                    print("\n🔁 Ambient silent, loading new ambient file...")
-                    next_ambient = file_mgr.get_random_ambient()
-                    if next_ambient and engine.current_ambient_file != next_ambient:
-                        engine.load_new_ambient(next_ambient)
-                        display.update_files(next_ambient[0], rhythm_info[0] if rhythm_info else "None")
+                # Check if we need to pre-load new tracks after a switch
+                current_crossfader = engine.crossfader
                 
-                elif engine.crossfader <= 0.05 and prev_crossfader > 0.05:
-                    # Rhythm is silent (or nearly silent), load new rhythm
-                    print("\n🔁 Rhythm silent, loading new rhythm file...")
+                # If ambient just became audible (was silent, now audible)
+                # OR if ambient is silent but we don't have a next buffer pre-loaded
+                if (current_crossfader < 0.95 and prev_crossfader >= 0.95) or \
+                   (current_crossfader >= 0.95 and engine.next_ambient_buffer is None):
+                    # Ambient is or might become audible soon, pre-load next ambient
+                    next_ambient = file_mgr.get_random_ambient()
+                    if next_ambient and next_ambient != engine.current_ambient_file:
+                        print(f"\n📥 Pre-loading next ambient: {next_ambient[0]}")
+                        engine.preload_next_ambient(next_ambient)
+                
+                # If rhythm just became audible (was silent, now audible)
+                # OR if rhythm is silent but we don't have a next buffer pre-loaded
+                if (current_crossfader > 0.05 and prev_crossfader <= 0.05) or \
+                   (current_crossfader <= 0.05 and engine.next_rhythm_buffer is None):
+                    # Rhythm is or might become audible soon, pre-load next rhythm
                     next_rhythm = file_mgr.get_random_rhythm()
-                    if next_rhythm and engine.current_rhythm_file != next_rhythm:
-                        engine.load_new_rhythm(next_rhythm)
-                        display.update_files(ambient_info[0] if ambient_info else "None", next_rhythm[0])
+                    if next_rhythm and next_rhythm != engine.current_rhythm_file:
+                        print(f"\n📥 Pre-loading next rhythm: {next_rhythm[0]}")
+                        engine.preload_next_rhythm(next_rhythm)
+                
+                # Update display with current filenames (in case of switch)
+                if engine.current_ambient_file and engine.current_rhythm_file:
+                    display.update_files(
+                        engine.current_ambient_file[0],
+                        engine.current_rhythm_file[0]
+                    )
                 
                 # Update previous crossfader
-                prev_crossfader = engine.crossfader
+                prev_crossfader = current_crossfader
                 
                 # Small delay to avoid CPU overload
                 time.sleep(0.05)
