@@ -101,6 +101,9 @@ def main():
         else:
             print("⚠️  Failed to load rhythm file!")
         
+        # Update display with initial filenames
+        display.update_files(ambient_info[0] if ambient_info else None, rhythm_info[0] if rhythm_info else None)
+        
         # Set initial state (100% ambient, effects off)
         engine.set_crossfader(0.0)  # 100% ambient
         engine.set_delay_amount(0.0)  # Delay off

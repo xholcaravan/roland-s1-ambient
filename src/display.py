@@ -29,6 +29,10 @@ class Display:
         self.ambient_volume = 1.0
         self.rhythm_volume = 0.0
         
+        # Store current filenames
+        self.current_ambient_filename = "None"
+        self.current_rhythm_filename = "None"
+        
         self.last_update = time.time()
         self.update_interval = 0.1  # Update every 100ms
         
@@ -48,6 +52,11 @@ class Display:
     def update_volumes(self, ambient_vol, rhythm_vol):
         self.ambient_volume = ambient_vol
         self.rhythm_volume = rhythm_vol
+    
+    def update_files(self, ambient_filename, rhythm_filename):
+        """Update the current filenames for display."""
+        self.current_ambient_filename = ambient_filename[:30] if ambient_filename else "None"
+        self.current_rhythm_filename = rhythm_filename[:30] if rhythm_filename else "None"
     
     # ===== DISPLAY METHODS =====
     
@@ -129,16 +138,9 @@ class Display:
         current_time = now.strftime("%H:%M:%S")
         
         # Get audio engine info
-        ambient_info = rhythm_info = None
         ambient_duration = rhythm_duration = 0
         if self.audio_engine:
-            # Try to get file info if method exists
-            try:
-                ambient_info, rhythm_info = self.audio_engine.get_current_files_info()
-            except:
-                pass
-            
-            # Get durations if files are loaded
+            # Try to get durations if files are loaded
             if hasattr(self.audio_engine, 'current_ambient_file') and self.audio_engine.current_ambient_file:
                 _, _, ambient_path = self.audio_engine.current_ambient_file
                 ambient_duration = self.get_audio_duration(ambient_path)
@@ -156,27 +158,17 @@ class Display:
         lines.append(f"│ 🎹 ROLAND S-1 AMBIENT ENGINE  ⏰ {current_time}".ljust(terminal_width - 2) + "│")
         lines.append("├" + "─" * (terminal_width - 2) + "┤")
         
-        # Currently playing files
-        ambient_name = "None"
-        rhythm_name = "None"
-        
-        if ambient_info and 'filename' in ambient_info:
-            ambient_name = ambient_info['filename'][:20]
-        elif hasattr(self.audio_engine, 'current_ambient_file') and self.audio_engine.current_ambient_file:
-            ambient_name = self.audio_engine.current_ambient_file[0][:20]
-        
-        if rhythm_info and 'filename' in rhythm_info:
-            rhythm_name = rhythm_info['filename'][:20]
-        elif hasattr(self.audio_engine, 'current_rhythm_file') and self.audio_engine.current_rhythm_file:
-            rhythm_name = self.audio_engine.current_rhythm_file[0][:20]
+        # Currently playing files - use stored filenames
+        ambient_name = self.current_ambient_filename
+        rhythm_name = self.current_rhythm_filename
         
         # Ambient track
         amb_bar = self._draw_progress_bar(self.ambient_volume)
-        lines.append(f"│ AMBIENT:  {ambient_name:20} {amb_bar:25} │")
+        lines.append(f"│ AMBIENT:  {ambient_name:30} {amb_bar:25} │")
         
         # Rhythm track
         rhy_bar = self._draw_progress_bar(self.rhythm_volume)
-        lines.append(f"│ RHYTHM:   {rhythm_name:20} {rhy_bar:25} │")
+        lines.append(f"│ RHYTHM:   {rhythm_name:30} {rhy_bar:25} │")
         
         lines.append("│" + " " * (terminal_width - 2) + "│")
         
