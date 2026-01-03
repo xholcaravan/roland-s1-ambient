@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Display module for Roland S-1 Controller
-Shows volume levels, current files, crossfade info in a nice UI.
+Now includes delay/reverb effects display.
 """
 
 import os
@@ -22,11 +22,34 @@ class Display:
         # Cache for file durations to avoid reading files every frame
         self.duration_cache = {}
         
-        # Display state
+        # Display state for effects
+        self.crossfader = 0.0
+        self.delay_amount = 0.0
+        self.reverb_amount = 0.0
+        self.ambient_volume = 1.0
+        self.rhythm_volume = 0.0
+        
         self.last_update = time.time()
         self.update_interval = 0.1  # Update every 100ms
         
-        print("Display initialized")
+        print("Display initialized (with effects)")
+    
+    # ===== UPDATE METHODS =====
+    
+    def update_crossfader(self, value):
+        self.crossfader = value
+    
+    def update_delay(self, value):
+        self.delay_amount = value
+    
+    def update_reverb(self, value):
+        self.reverb_amount = value
+    
+    def update_volumes(self, ambient_vol, rhythm_vol):
+        self.ambient_volume = ambient_vol
+        self.rhythm_volume = rhythm_vol
+    
+    # ===== DISPLAY METHODS =====
     
     def start(self):
         """Start the display thread."""
@@ -70,6 +93,35 @@ class Display:
         """Format duration as seconds with 1 decimal place."""
         return f"{seconds:.1f}s"
     
+    def _draw_progress_bar(self, value, width=20):
+        """Draw a progress bar for values 0-1."""
+        filled = int(value * width)
+        bar = '█' * filled + '░' * (width - filled)
+        percentage = int(value * 100)
+        return f"[{bar}] {percentage:3}%"
+    
+    def _draw_crossfader_bar(self, value, width=30):
+        """Draw a crossfader visualization."""
+        pos = int(value * (width - 1))
+        bar = ' ' * pos + '█' + ' ' * (width - pos - 1)
+        return f"A ◄─{bar}► R"
+    
+    def _draw_volume_bar(self, label, volume, icon="🎹"):
+        """Draw a volume bar with icon."""
+        bar = self._draw_progress_bar(volume)
+        print(f"  {icon} {label:10} {bar}")
+    
+    def get_delay_description(self, amount):
+        """Get description of current delay settings."""
+        if amount == 0:
+            return "OFF"
+        elif amount <= 0.3:
+            return f"SHORT ({int(amount*100)}%)"
+        elif amount <= 0.7:
+            return f"MEDIUM ({int(amount*100)}%)"
+        else:
+            return f"LONG ({int(amount*100)}%)"
+    
     def render_display(self):
         """Render the main display."""
         # Get current time
@@ -80,187 +132,90 @@ class Display:
         ambient_info = rhythm_info = None
         ambient_duration = rhythm_duration = 0
         if self.audio_engine:
-            ambient_info, rhythm_info = self.audio_engine.get_current_files_info()
+            # Try to get file info if method exists
+            try:
+                ambient_info, rhythm_info = self.audio_engine.get_current_files_info()
+            except:
+                pass
             
             # Get durations if files are loaded
-            if self.audio_engine.current_ambient_file:
+            if hasattr(self.audio_engine, 'current_ambient_file') and self.audio_engine.current_ambient_file:
                 _, _, ambient_path = self.audio_engine.current_ambient_file
                 ambient_duration = self.get_audio_duration(ambient_path)
             
-            if self.audio_engine.current_rhythm_file:
+            if hasattr(self.audio_engine, 'current_rhythm_file') and self.audio_engine.current_rhythm_file:
                 _, _, rhythm_path = self.audio_engine.current_rhythm_file
                 rhythm_duration = self.get_audio_duration(rhythm_path)
         
-        # Get file manager info
-        next_ambient = next_rhythm = None
-        if self.file_manager:
-            next_ambient = self.file_manager.get_next_ambient_info()
-            next_rhythm = self.file_manager.get_next_rhythm_info()
+        # Terminal width
+        terminal_width = 80
         
-        print("\n" + "="*60)
-        print("🎹 ROLAND S-1 AMBIENT/RHYTHM CONTROLLER")
-        print(f"⏰ {current_time}")
-        print("="*60)
+        # Build display
+        lines = []
+        lines.append("┌" + "─" * (terminal_width - 2) + "┐")
+        lines.append(f"│ 🎹 ROLAND S-1 AMBIENT ENGINE  ⏰ {current_time}".ljust(terminal_width - 2) + "│")
+        lines.append("├" + "─" * (terminal_width - 2) + "┤")
         
-        # Volume bars
-        print("\n🎚️  VOLUME LEVELS:")
-        if self.audio_engine:
-            self._draw_volume_bar("AMBIENT", self.audio_engine.ambient_volume, "🎹")
-            self._draw_volume_bar("RHYTHM", self.audio_engine.rhythm_volume, "🥁")
-        else:
-            print("  🎹 AMBIENT: No audio engine")
-            print("  🥁 RHYTHM: No audio engine")
+        # Currently playing files
+        ambient_name = "None"
+        rhythm_name = "None"
         
-        print("\n" + "-"*60)
+        if ambient_info and 'filename' in ambient_info:
+            ambient_name = ambient_info['filename'][:20]
+        elif hasattr(self.audio_engine, 'current_ambient_file') and self.audio_engine.current_ambient_file:
+            ambient_name = self.audio_engine.current_ambient_file[0][:20]
         
-        # Currently playing
-        print("🎵 NOW PLAYING:")
+        if rhythm_info and 'filename' in rhythm_info:
+            rhythm_name = rhythm_info['filename'][:20]
+        elif hasattr(self.audio_engine, 'current_rhythm_file') and self.audio_engine.current_rhythm_file:
+            rhythm_name = self.audio_engine.current_rhythm_file[0][:20]
         
-        if ambient_info:
-            filename = ambient_info['filename']
-            crossfade = ambient_info['crossfade_ms']
-            volume = ambient_info['volume']
-            
-            # Remove prefix and extension for display
-            display_name = filename[2:] if filename.startswith(('a_', 'r_')) else filename
-            display_name = os.path.splitext(display_name)[0]
-            
-            duration_str = self.format_duration(ambient_duration)
-            
-            print(f"  🎹 AMBIENT: {display_name}")
-            print(f"    📊 Volume: {volume*100:.0f}%  |  🔄 Crossfade: {crossfade}ms")
-            print(f"    ⏱️  Length: {duration_str}")
-        else:
-            print("  🎹 AMBIENT: No file loaded")
+        # Ambient track
+        amb_bar = self._draw_progress_bar(self.ambient_volume)
+        lines.append(f"│ AMBIENT:  {ambient_name:20} {amb_bar:25} │")
         
-        if rhythm_info:
-            filename = rhythm_info['filename']
-            crossfade = rhythm_info['crossfade_ms']
-            volume = rhythm_info['volume']
-            
-            # Remove prefix and extension for display
-            display_name = filename[2:] if filename.startswith(('a_', 'r_')) else filename
-            display_name = os.path.splitext(display_name)[0]
-            
-            duration_str = self.format_duration(rhythm_duration)
-            
-            print(f"  🥁 RHYTHM: {display_name}")
-            print(f"    📊 Volume: {volume*100:.0f}%  |  🔄 Crossfade: {crossfade}ms")
-            print(f"    ⏱️  Length: {duration_str}")
-        else:
-            print("  🥁 RHYTHM: No file loaded")
+        # Rhythm track
+        rhy_bar = self._draw_progress_bar(self.rhythm_volume)
+        lines.append(f"│ RHYTHM:   {rhythm_name:20} {rhy_bar:25} │")
         
-        print("\n" + "-"*60)
+        lines.append("│" + " " * (terminal_width - 2) + "│")
         
-        # Next in queue
-        print("⏭️  NEXT IN QUEUE:")
+        # Crossfader
+        fader_bar = self._draw_crossfader_bar(self.crossfader)
+        lines.append(f"│ CROSSFADE: {fader_bar}".ljust(terminal_width - 2) + "│")
         
-        if next_ambient:
-            next_name = next_ambient['filename'][2:] if next_ambient['filename'].startswith('a_') else next_ambient['filename']
-            next_name = os.path.splitext(next_name)[0]
-            print(f"  🎹 Next ambient: {next_name}")
-        else:
-            print("  �� Next ambient: None")
+        # Delay
+        delay_desc = self.get_delay_description(self.delay_amount)
+        delay_bar = self._draw_progress_bar(self.delay_amount)
+        lines.append(f"│ DELAY:    {delay_desc:15} {delay_bar:25} │")
         
-        if next_rhythm:
-            next_name = next_rhythm['filename'][2:] if next_rhythm['filename'].startswith('r_') else next_rhythm['filename']
-            next_name = os.path.splitext(next_name)[0]
-            print(f"  🥁 Next rhythm: {next_name}")
-        else:
-            print("  🥁 Next rhythm: None")
+        # Reverb
+        reverb_bar = self._draw_progress_bar(self.reverb_amount)
+        reverb_percent = int(self.reverb_amount * 100)
+        lines.append(f"│ REVERB:   {reverb_percent:3}%{' ':12} {reverb_bar:25} │")
         
-        print("\n" + "-"*60)
+        lines.append("│" + " " * (terminal_width - 2) + "│")
         
-        # Status
-        if self.audio_engine:
-            status = "▶️ PLAYING" if self.audio_engine.is_playing else "⏸️ PAUSED"
-            print(f"STATUS: {status}")
-        else:
-            print("STATUS: No audio engine")
+        # File info (if available)
+        if ambient_duration > 0 or rhythm_duration > 0:
+            lines.append(f"│ DURATION: Ambient={self.format_duration(ambient_duration):6}  Rhythm={self.format_duration(rhythm_duration):6}".ljust(terminal_width - 2) + "│")
+        
+        # Crossfade info (if available)
+        if hasattr(self.audio_engine, 'ambient_crossfade_ms') and self.audio_engine.ambient_crossfade_ms:
+            lines.append(f"│ LOOP XFADE: A={self.audio_engine.ambient_crossfade_ms:4}ms  R={self.audio_engine.rhythm_crossfade_ms:4}ms".ljust(terminal_width - 2) + "│")
+        
+        lines.append("│" + " " * (terminal_width - 2) + "│")
         
         # Controls reminder
-        print("\n" + "="*60)
-        print("CONTROLS:")
-        print("  • A/D: Control crossfader (Ambient ↔ Rhythm)")
-        print("  • When volume hits 10%, next file loads automatically")
-        print("  • Ctrl+C to quit")
-        print("="*60)
-    
-    def _draw_volume_bar(self, label, volume, icon):
-        """Draw a volume bar."""
-        bar_length = 40
-        filled_length = int(volume * bar_length)
-        bar = "█" * filled_length + "░" * (bar_length - filled_length)
-        percentage = volume * 100
+        controls = "CONTROLS: Q=↑A A=↑R W/S=Delay E/D=Reverb ESC=Quit"
+        lines.append(f"│ {controls}".ljust(terminal_width - 2) + "│")
         
-        # Add color indicator
-        if percentage >= 80:
-            color_indicator = "🔴"
-        elif percentage >= 50:
-            color_indicator = "🟡"
-        else:
-            color_indicator = "🟢"
+        lines.append("└" + "─" * (terminal_width - 2) + "┘")
         
-        print(f"  {icon} {label}: {color_indicator} [{bar}] {percentage:3.0f}%")
+        # Print everything
+        print("\n".join(lines))
     
-    def update(self):
-        """Force an immediate display update."""
+    def render(self):
+        """Render display (for manual updates from midi_handler)."""
         self.clear_screen()
         self.render_display()
-
-def test_display():
-    """Test the display module."""
-    print("\n" + "="*60)
-    print("Testing Display Module")
-    print("="*60)
-    
-    # Mock objects for testing
-    class MockAudioEngine:
-        def __init__(self):
-            self.ambient_volume = 0.7
-            self.rhythm_volume = 0.3
-            self.is_playing = True
-            self.current_ambient_file = ('a_test.wav', 1000, 'samples/ambient/a_test.wav')
-            self.current_rhythm_file = ('r_test.wav', 100, 'samples/rhythm/r_test.wav')
-        
-        def get_current_files_info(self):
-            ambient_info = {
-                'filename': 'a_Azaleas - Wangjaesan light music band.wav',
-                'crossfade_ms': 1000,
-                'volume': 0.7
-            }
-            rhythm_info = {
-                'filename': 'r_Are We Living Like in Those Days - Pochonbo Electronic Ensemble.wav',
-                'crossfade_ms': 100,
-                'volume': 0.3
-            }
-            return ambient_info, rhythm_info
-    
-    class MockFileManager:
-        def get_next_ambient_info(self):
-            return {
-                'filename': 'a_Dancing Dolls.wav',
-                'crossfade_ms': 500,
-                'filepath': 'samples/ambient/a_Dancing Dolls.wav'
-            }
-        
-        def get_next_rhythm_info(self):
-            return {
-                'filename': 'r_Ecstasy.wav',
-                'crossfade_ms': 50,
-                'filepath': 'samples/rhythm/r_Ecstasy.wav'
-            }
-    
-    # Create display
-    mock_engine = MockAudioEngine()
-    mock_fm = MockFileManager()
-    display = Display(mock_engine, mock_fm)
-    
-    # Render once
-    display.render_display()
-    
-    print("\nDisplay test complete!")
-    print("="*60)
-
-if __name__ == "__main__":
-    test_display()

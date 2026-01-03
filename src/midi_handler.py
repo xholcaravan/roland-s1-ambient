@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MIDI Handler for Roland S-1 Controller
-Uses simulated input for development, can switch to real hardware later.
+Now with delay/reverb effects controls.
 """
 
 import sys
@@ -14,12 +14,18 @@ import termios
 class MidiHandler:
     """MIDI handler with simulation for development."""
     
-    def __init__(self, use_simulation=True):
+    def __init__(self, audio_engine, display, use_simulation=True):
+        self.audio_engine = audio_engine
+        self.display = display
         self.use_simulation = use_simulation
         
         # Terminal settings for raw input
         self.old_settings = None
         self.running = True
+        
+        # Control step sizes
+        self.crossfade_step = 0.05  # 5% per keypress
+        self.effect_step = 0.1      # 10% per keypress
         
         if use_simulation:
             print("Using SIMULATED MIDI controls")
@@ -31,17 +37,13 @@ class MidiHandler:
     
     def _init_simulation(self):
         """Initialize simulated MIDI controls."""
-        self.knob_values = {1: 64, 2: 64, 3: 64, 4: 64}  # Middle (64 = 50%)
-        
         print("\n" + "="*50)
         print("SIMULATED ROLAND S-1 CONTROLS")
         print("="*50)
-        print("  A/D: KNOB 1 (Crossfader A← →R)")
-        print("  W/S: KNOB 2")
-        print("  I/K: KNOB 3")
-        print("  O/L: KNOB 4")
-        print("  R:   Reset all knobs")
-        print("  Q:   Quit program")
+        print("  Q/A: Channel Crossfader (Q=↑Ambient, A=↑Rhythm)")
+        print("  W/S: Delay amount (W=↑, S=↓)")
+        print("  E/D: Reverb amount (E=↑, D=↓)")
+        print("  ESC: Quit program")
         print("="*50)
         print("\nWaiting for input...")
         
@@ -68,94 +70,76 @@ class MidiHandler:
     
     def _handle_key(self, key):
         """Handle keyboard input."""
-        # KNOB 1: Crossfader
-        if key == 'a':
-            self._adjust_knob(1, -5)
-        elif key == 'd':
-            self._adjust_knob(1, +5)
-        
-        # Other knobs
-        elif key == 'w':
-            self._adjust_knob(2, +5)
-        elif key == 's':
-            self._adjust_knob(2, -5)
-        elif key == 'i':
-            self._adjust_knob(3, +5)
-        elif key == 'k':
-            self._adjust_knob(3, -5)
-        elif key == 'o':
-            self._adjust_knob(4, +5)
-        elif key == 'l':
-            self._adjust_knob(4, -5)
-        
-        # Reset
-        elif key == 'r':
-            for i in range(1, 5):
-                self.knob_values[i] = 64
-            print("\n[RESET] All knobs to middle position")
-        
-        # Quit
-        elif key == 'q':
-            self.running = False
-            print("\n[QUIT] Signal received")
-    
-    def _adjust_knob(self, knob_num, delta):
-        """Adjust knob value."""
-        old = self.knob_values[knob_num]
-        new = max(0, min(127, old + delta))
-        
-        if new != old:
-            self.knob_values[knob_num] = new
-            percent = int((new / 127) * 100)
+        # CHANNEL CROSSFADER (Q/A)
+        if key == 'q':  # More Ambient
+            new_value = self.audio_engine.crossfader - self.crossfade_step
+            self.audio_engine.set_crossfader(max(0.0, new_value))
+            print(f"[XFADE] Ambient↑ {self.audio_engine.crossfader:.2f}")
             
-            # For knob 1, show A/R direction
-            if knob_num == 1:
-                if percent < 40:
-                    direction = "R dominant"
-                elif percent > 60:
-                    direction = "A dominant"
-                else:
-                    direction = "balanced"
-                print(f"[KNOB 1] {percent}% ({direction})")
-            else:
-                print(f"[KNOB {knob_num}] {percent}%")
-    
-    def get_knob_value(self, knob_num):
-        """Get knob value (0-127)."""
-        return self.knob_values.get(knob_num, 64)
-    
-    def get_knob_percentage(self, knob_num):
-        """Get knob as percentage (0-100)."""
-        return int((self.get_knob_value(knob_num) / 127) * 100)
-    
-    def is_connected(self):
-        """Always true for simulation."""
-        return True
-    
-    def close(self):
-        """Clean up and restore terminal."""
-        self.running = False
-        if self.input_thread.is_alive():
-            self.input_thread.join(timeout=0.1)
+        elif key == 'a':  # More Rhythm
+            new_value = self.audio_engine.crossfader + self.crossfade_step
+            self.audio_engine.set_crossfader(min(1.0, new_value))
+            print(f"[XFADE] Rhythm↑ {self.audio_engine.crossfader:.2f}")
         
-        # Restore terminal settings
+        # DELAY (W/S)
+        elif key == 'w':  # Increase delay
+            new_value = self.audio_engine.delay_amount + self.effect_step
+            self.audio_engine.set_delay_amount(min(1.0, new_value))
+            self._print_delay_status()
+            
+        elif key == 's':  # Decrease delay
+            new_value = self.audio_engine.delay_amount - self.effect_step
+            self.audio_engine.set_delay_amount(max(0.0, new_value))
+            self._print_delay_status()
+        
+        # REVERB (E/D)
+        elif key == 'e':  # Increase reverb
+            new_value = self.audio_engine.reverb_amount + self.effect_step
+            self.audio_engine.set_reverb_amount(min(1.0, new_value))
+            print(f"[REVERB] {int(self.audio_engine.reverb_amount * 100)}%")
+            
+        elif key == 'd':  # Decrease reverb
+            new_value = self.audio_engine.reverb_amount - self.effect_step
+            self.audio_engine.set_reverb_amount(max(0.0, new_value))
+            print(f"[REVERB] {int(self.audio_engine.reverb_amount * 100)}%")
+        
+        # ESC to quit
+        elif ord(key) == 27:  # ESC key
+            self.running = False
+            print("\n[QUIT] ESC pressed")
+        
+        # Update display
+        self.display.update_crossfader(self.audio_engine.crossfader)
+        self.display.update_delay(self.audio_engine.delay_amount)
+        self.display.update_reverb(self.audio_engine.reverb_amount)
+        self.display.update_volumes(
+            self.audio_engine.ambient_volume,
+            self.audio_engine.rhythm_volume
+        )
+        self.display.render()
+    
+    def _print_delay_status(self):
+        """Print delay status with descriptive text."""
+        amount = self.audio_engine.delay_amount
+        percent = int(amount * 100)
+        
+        if amount == 0:
+            desc = "OFF"
+        elif amount <= 0.3:
+            desc = f"SHORT ({percent}%)"
+        elif amount <= 0.7:
+            desc = f"MEDIUM ({percent}%)"
+        else:
+            desc = f"LONG ({percent}%)"
+        
+        print(f"[DELAY] {desc}")
+    
+    def cleanup(self):
+        """Clean up terminal settings."""
         if self.old_settings:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
-
-if __name__ == "__main__":
-    # Test the handler
-    print("Testing MIDI Handler...")
     
-    handler = MidiHandler()
-    
-    print("\nTesting for 10 seconds...")
-    print("Try pressing A/D to control KNOB 1")
-    print("Press Q to quit early")
-    
-    start = time.time()
-    while time.time() - start < 10 and handler.running:
-        time.sleep(0.1)
-    
-    handler.close()
-    
-    print("\nTest complete!")
+    def wait_for_exit(self):
+        """Wait for the input thread to finish."""
+        if hasattr(self, 'input_thread'):
+            self.input_thread.join(timeout=1.0)
