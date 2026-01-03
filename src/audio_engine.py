@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Real Audio Engine for Roland S-1 Controller
-Now with loop crossfades based on saved .txt configs.
+Now with FIXED-TIME loop crossfades (300s buffers).
 """
 
 import sounddevice as sd
@@ -11,7 +11,7 @@ import threading
 import time
 
 class AudioEngine:
-    """Real audio engine with loop crossfades."""
+    """Real audio engine with fixed-time loop crossfades."""
     
     def __init__(self, sample_rate=44100, buffer_size=1024):
         self.sample_rate = sample_rate
@@ -26,12 +26,12 @@ class AudioEngine:
         self.ambient_crossfade_ms = 0
         self.rhythm_crossfade_ms = 0
         
-        # Pre-rendered buffers for crossfades
+        # Pre-rendered buffers for crossfades (FIXED 300s/5min)
         self.ambient_buffer = None
         self.rhythm_buffer = None
         self.ambient_buffer_position = 0
         self.rhythm_buffer_position = 0
-        self.buffer_loops = 3  # Pre-render 3 loops
+        self.target_buffer_seconds = 300  # 5 minutes fixed buffer
         
         # Volume controls (0.0 to 1.0)
         self.ambient_volume = 0.5
@@ -45,9 +45,10 @@ class AudioEngine:
         self.is_playing = False
         
         print(f"AudioEngine initialized: {sample_rate}Hz, buffer: {buffer_size}")
+        print(f"Fixed buffer duration: {self.target_buffer_seconds}s (5min)")
     
     def load_audio_file(self, file_info, track='ambient'):
-        """Load a WAV file and create pre-rendered buffer with crossfade."""
+        """Load a WAV file and create fixed-time buffer with crossfade."""
         if not file_info:
             print(f"Error: No file info provided for {track}")
             return False
@@ -76,22 +77,26 @@ class AudioEngine:
                 self.ambient_crossfade_ms = crossfade_ms
                 self.current_ambient_file = file_info
                 
-                # Create pre-rendered buffer with crossfade
-                self.ambient_buffer = self._create_crossfade_buffer(data, crossfade_ms)
+                # Create fixed-time buffer with crossfade
+                self.ambient_buffer = self._create_fixed_time_buffer(data, crossfade_ms)
                 self.ambient_buffer_position = 0
                 
-                print(f"  ✅ Ambient loaded: {len(data)/self.sample_rate:.1f}s, buffer: {len(self.ambient_buffer)/self.sample_rate:.1f}s")
+                if self.ambient_buffer is not None:
+                    print(f"  ✅ Ambient loaded: {len(data)/self.sample_rate:.1f}s file")
+                    print(f"     Buffer: {len(self.ambient_buffer)/self.sample_rate:.1f}s ({len(self.ambient_buffer)/self.sample_rate/60:.1f}min)")
             else:
                 self.rhythm_data = data
                 self.rhythm_position = 0
                 self.rhythm_crossfade_ms = crossfade_ms
                 self.current_rhythm_file = file_info
                 
-                # Create pre-rendered buffer with crossfade
-                self.rhythm_buffer = self._create_crossfade_buffer(data, crossfade_ms)
+                # Create fixed-time buffer with crossfade
+                self.rhythm_buffer = self._create_fixed_time_buffer(data, crossfade_ms)
                 self.rhythm_buffer_position = 0
                 
-                print(f"  ✅ Rhythm loaded: {len(data)/self.sample_rate:.1f}s, buffer: {len(self.rhythm_buffer)/self.sample_rate:.1f}s")
+                if self.rhythm_buffer is not None:
+                    print(f"  ✅ Rhythm loaded: {len(data)/self.sample_rate:.1f}s file")
+                    print(f"     Buffer: {len(self.rhythm_buffer)/self.sample_rate:.1f}s ({len(self.rhythm_buffer)/self.sample_rate/60:.1f}min)")
             
             return True
             
@@ -101,18 +106,54 @@ class AudioEngine:
             traceback.print_exc()
             return False
     
-    def _create_crossfade_buffer(self, audio_data, crossfade_ms):
-        """Create pre-rendered buffer with crossfades (same as testing script)."""
+    def _create_fixed_time_buffer(self, audio_data, crossfade_ms):
+        """Create buffer with fixed duration (default 300s/5min)."""
         if audio_data is None or len(audio_data) == 0:
             return None
         
+        sample_rate = self.sample_rate
         total_samples = len(audio_data)
-        crossfade_samples = int(crossfade_ms * self.sample_rate / 1000)
+        crossfade_samples = int(crossfade_ms * sample_rate / 1000)
         
-        # Calculate total buffer length
+        # Calculate loop parameters
+        file_duration = total_samples / sample_rate  # seconds
+        effective_loop_samples = total_samples - crossfade_samples
+        
+        # Safety check
+        if crossfade_samples >= total_samples:
+            print(f"  ⚠️  Crossfade {crossfade_ms}ms >= file duration {file_duration:.1f}s!")
+            print(f"  Reducing crossfade to {file_duration*500:.0f}ms (50% of file)")
+            crossfade_samples = int(total_samples * 0.5)
+            crossfade_ms = crossfade_samples * 1000 / sample_rate
+        
+        effective_loop_duration = effective_loop_samples / sample_rate  # seconds
+        
+        if effective_loop_duration <= 0:
+            print(f"  ⚠️  Crossfade {crossfade_ms}ms >= file duration {file_duration:.1f}s!")
+            return None
+        
+        # Calculate how many loops fit in target time
+        loops_needed = int(np.ceil(self.target_buffer_seconds / effective_loop_duration))
+        
+        # Calculate total buffer samples
         # First loop: full length
         # Subsequent loops: full length minus crossfade (overlap)
-        total_buffer_samples = total_samples + (self.buffer_loops - 1) * (total_samples - crossfade_samples)
+        total_buffer_samples = total_samples + (loops_needed - 1) * effective_loop_samples
+        
+        # Ensure buffer is at least target_seconds
+        target_samples = int(self.target_buffer_seconds * sample_rate)
+        if total_buffer_samples < target_samples:
+            # Add partial final loop if needed
+            remaining_samples = target_samples - total_buffer_samples
+            if remaining_samples > 0:
+                # Add what we can from the beginning (after crossfade)
+                add_from_start = min(remaining_samples, effective_loop_samples)
+                total_buffer_samples += add_from_start
+        
+        print(f"    File: {file_duration:.1f}s, Crossfade: {crossfade_ms:.0f}ms")
+        print(f"    Effective loop: {effective_loop_duration:.1f}s")
+        print(f"    Loops needed: {loops_needed}")
+        print(f"    Buffer: {total_buffer_samples/sample_rate:.1f}s")
         
         # Create buffer
         buffer = np.zeros((total_buffer_samples, 2), dtype=np.float32)
@@ -121,14 +162,14 @@ class AudioEngine:
         buffer[:total_samples] = audio_data
         
         # Render subsequent loops with crossfade
-        for loop in range(1, self.buffer_loops):
-            start_sample = total_samples + (loop - 1) * (total_samples - crossfade_samples)
+        for loop in range(1, loops_needed):
+            start_sample = total_samples + (loop - 1) * effective_loop_samples
             
             # Get the overlapping region from previous loop
             prev_end = buffer[start_sample - crossfade_samples:start_sample].copy()
             curr_start = audio_data[:crossfade_samples].copy()
             
-            # Apply crossfade (identical to testing script!)
+            # Apply crossfade
             t = np.linspace(0, 1, crossfade_samples).reshape(-1, 1)
             crossfade_region = prev_end * (1 - t) + curr_start * t
             
@@ -139,6 +180,18 @@ class AudioEngine:
             remaining = total_samples - crossfade_samples
             if remaining > 0:
                 buffer[start_sample:start_sample + remaining] = audio_data[crossfade_samples:]
+        
+        # If we added a partial final loop
+        if total_buffer_samples > total_samples + (loops_needed - 1) * effective_loop_samples:
+            extra_start = total_samples + (loops_needed - 1) * effective_loop_samples
+            extra_needed = total_buffer_samples - extra_start
+            
+            # Copy from after crossfade of the file
+            copy_from = crossfade_samples
+            copy_to = min(copy_from + extra_needed, total_samples)
+            
+            buffer[extra_start:extra_start + (copy_to - copy_from)] = \
+                audio_data[copy_from:copy_to]
         
         return buffer
     
@@ -203,7 +256,7 @@ class AudioEngine:
         """Load new rhythm file (when knob hits 100%)."""
         success = self.load_audio_file(file_info, 'rhythm')
         if success:
-            print(f"🔄 Rhythm channel: Loaded {file_info[0]}")
+            print(f"�� Rhythm channel: Loaded {file_info[0]}")
         return success
     
     def get_current_files_info(self):
@@ -256,9 +309,9 @@ class AudioEngine:
 
 # Test function
 def test_audio_engine():
-    """Test the audio engine with crossfade integration."""
+    """Test the audio engine with fixed-time crossfades."""
     print("\n" + "="*50)
-    print("Testing AudioEngine with crossfades")
+    print("Testing AudioEngine with FIXED-TIME crossfades")
     print("="*50)
     
     # Create test file info (simulating FileManager output)
