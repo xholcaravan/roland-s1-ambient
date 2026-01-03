@@ -1,6 +1,0 @@
-{
-  "crossfade_ms": 5000,
-  "strategy": "crossfade",
-  "saved_at": "2026-01-02 13:51:54",
-  "note": "Starts fading 5.0s before end"
-}

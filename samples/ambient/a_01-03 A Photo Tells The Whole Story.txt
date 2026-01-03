@@ -1,0 +1,7 @@
+{
+  "crossfade_ms": 5000,
+  "type": "ambient",
+  "selected_label": null,
+  "saved_at": "2026-01-02 22:42:23",
+  "note": "Manual crossfade"
+}

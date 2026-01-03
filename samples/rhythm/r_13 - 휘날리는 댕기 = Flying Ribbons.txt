@@ -1,0 +1,7 @@
+{
+  "crossfade_ms": 0,
+  "type": "rhythmic",
+  "selected_label": null,
+  "saved_at": "2026-01-02 20:49:53",
+  "note": "Manual crossfade"
+}

@@ -1,0 +1,7 @@
+{
+  "crossfade_ms": 367.00680272108866,
+  "type": "rhythmic",
+  "selected_label": "B",
+  "saved_at": "2026-01-02 21:03:28",
+  "note": "Auto-crossfade from label"
+}

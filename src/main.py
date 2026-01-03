@@ -123,13 +123,13 @@ def main():
                 engine.set_volumes(ambient_vol, rhythm_vol)
                 
                 # Check for auto-load conditions
-                if ambient_vol <= 0.1 and prev_ambient_vol > 0.1:
+                if ambient_vol < 0.001 and prev_ambient_vol >= 0.001:
                     print("\n�� Ambient volume low! Loading next ambient file...")
                     next_ambient = file_mgr.get_next_ambient()
                     if next_ambient:
                         engine.load_new_ambient(next_ambient)
                 
-                if rhythm_vol <= 0.1 and prev_rhythm_vol > 0.1:
+                if rhythm_vol < 0.001 and prev_rhythm_vol >= 0.001:
                     print("\n🥁 Rhythm volume low! Loading next rhythm file...")
                     next_rhythm = file_mgr.get_next_rhythm()
                     if next_rhythm:
