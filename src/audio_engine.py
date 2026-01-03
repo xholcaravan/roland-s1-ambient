@@ -41,7 +41,7 @@ class AudioEngine:
         self.next_ambient_buffer_position = 0
         self.next_rhythm_buffer_position = 0
         
-        self.target_buffer_seconds = 60  # 5 minutes fixed buffer
+        self.target_buffer_seconds = 150  # 5 minutes fixed buffer
         
         # Volume controls (0.0 to 1.0)
         self.ambient_volume = 1.0  # Start with 100% ambient
