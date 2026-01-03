@@ -36,7 +36,6 @@ def main():
         from audio_engine import AudioEngine
         from file_manager import FileManager
         from display import Display
-        from memory_monitor import MemoryMonitor
         from midi_handler import MidiHandler
         
         print("✅ All modules imported successfully")
@@ -59,7 +58,7 @@ def main():
         file_mgr = FileManager(ambient_dir=ambient_dir, rhythm_dir=rhythm_dir)
         
         print("Initializing Display...")
-        display = Display(engine, file_mgr, memory_monitor=MemoryMonitor(audio_engine=engine))
+        display = Display(engine, file_mgr)
         
         print("Initializing MIDI Handler...")
         midi = MidiHandler(audio_engine=engine, display=display, use_simulation=True)

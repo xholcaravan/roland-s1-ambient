@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Display module for Roland S-1 Controller
-Now includes delay/reverb effects display and memory monitoring.
+Now includes delay/reverb effects display.
 """
 
 import os
@@ -13,10 +13,9 @@ import soundfile as sf  # Add this to get audio duration
 class Display:
     """Handles display output for the controller."""
     
-    def __init__(self, audio_engine=None, file_manager=None, memory_monitor=None):
+    def __init__(self, audio_engine=None, file_manager=None):
         self.audio_engine = audio_engine
         self.file_manager = file_manager
-        self.memory_monitor = memory_monitor
         self.running = False
         self.display_thread = None
         
@@ -37,7 +36,7 @@ class Display:
         self.last_update = time.time()
         self.update_interval = 0.1  # Update every 100ms
         
-        print("Display initialized (with effects and memory monitoring)")
+        print("Display initialized (with effects)")
     
     # ===== UPDATE METHODS =====
     
@@ -108,7 +107,7 @@ class Display:
         filled = int(value * width)
         bar = '█' * filled + '░' * (width - filled)
         percentage = int(value * 100)
-        return f"[{bar}] {percentage:3d}%"
+        return f"[{bar}] {percentage:3}%"
     
     def _draw_crossfader_bar(self, value, width=30):
         """Draw a crossfader visualization."""
@@ -132,24 +131,11 @@ class Display:
         else:
             return f"LONG ({int(amount*100)}%)"
     
-    def get_memory_summary(self):
-        """Get memory usage summary for display."""
-        if not self.memory_monitor:
-            return "RAM: [--]"
-        
-        try:
-            return self.memory_monitor.get_memory_summary()
-        except:
-            return "RAM: [Error]"
-    
     def render_display(self):
         """Render the main display."""
         # Get current time
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
-        
-        # Get memory summary
-        memory_summary = self.get_memory_summary()
         
         # Get audio engine info
         ambient_duration = rhythm_duration = 0
@@ -169,12 +155,7 @@ class Display:
         # Build display
         lines = []
         lines.append("┌" + "─" * (terminal_width - 2) + "┐")
-        
-        # Title line with memory summary
-        title = f"🎹 ROLAND S-1 AMBIENT ENGINE  ⏰ {current_time}"
-        memory_display = memory_summary
-        lines.append(f"│ {title.ljust(terminal_width - 3 - len(memory_display))}{memory_display} │")
-        
+        lines.append(f"│ 🎹 ROLAND S-1 AMBIENT ENGINE  ⏰ {current_time}".ljust(terminal_width - 2) + "│")
         lines.append("├" + "─" * (terminal_width - 2) + "┤")
         
         # Currently playing files - use stored filenames

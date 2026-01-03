@@ -41,7 +41,7 @@ class AudioEngine:
         self.next_ambient_buffer_position = 0
         self.next_rhythm_buffer_position = 0
         
-        self.target_buffer_seconds = 60  # 5 minutes fixed buffer
+        self.target_buffer_seconds = 300  # 5 minutes fixed buffer
         
         # Volume controls (0.0 to 1.0)
         self.ambient_volume = 1.0  # Start with 100% ambient
@@ -79,7 +79,7 @@ class AudioEngine:
         )
         
         print(f"AudioEngine initialized: {sample_rate}Hz, buffer: {buffer_size}")
-        print(f"Fixed buffer duration: {self.target_buffer_seconds}s (1min)")
+        print(f"Fixed buffer duration: {self.target_buffer_seconds}s (5min)")
         print(f"4-BUFFER SYSTEM: Current + Next buffers for glitch-free switching")
         print(f"Effects system: Delay + Reverb (Pedalboard)")
     

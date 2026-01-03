@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Display module for Roland S-1 Controller
-Now includes delay/reverb effects display and memory monitoring.
+Now includes delay/reverb effects display.
 """
 
 import os
@@ -13,10 +13,9 @@ import soundfile as sf  # Add this to get audio duration
 class Display:
     """Handles display output for the controller."""
     
-    def __init__(self, audio_engine=None, file_manager=None, memory_monitor=None):
+    def __init__(self, audio_engine=None, file_manager=None):
         self.audio_engine = audio_engine
         self.file_manager = file_manager
-        self.memory_monitor = memory_monitor
         self.running = False
         self.display_thread = None
         
@@ -30,14 +29,10 @@ class Display:
         self.ambient_volume = 1.0
         self.rhythm_volume = 0.0
         
-        # Store current filenames
-        self.current_ambient_filename = "None"
-        self.current_rhythm_filename = "None"
-        
         self.last_update = time.time()
         self.update_interval = 0.1  # Update every 100ms
         
-        print("Display initialized (with effects and memory monitoring)")
+        print("Display initialized (with effects)")
     
     # ===== UPDATE METHODS =====
     
@@ -53,11 +48,6 @@ class Display:
     def update_volumes(self, ambient_vol, rhythm_vol):
         self.ambient_volume = ambient_vol
         self.rhythm_volume = rhythm_vol
-    
-    def update_files(self, ambient_filename, rhythm_filename):
-        """Update the current filenames for display."""
-        self.current_ambient_filename = ambient_filename[:30] if ambient_filename else "None"
-        self.current_rhythm_filename = rhythm_filename[:30] if rhythm_filename else "None"
     
     # ===== DISPLAY METHODS =====
     
@@ -108,7 +98,7 @@ class Display:
         filled = int(value * width)
         bar = '█' * filled + '░' * (width - filled)
         percentage = int(value * 100)
-        return f"[{bar}] {percentage:3d}%"
+        return f"[{bar}] {percentage:3}%"
     
     def _draw_crossfader_bar(self, value, width=30):
         """Draw a crossfader visualization."""
@@ -132,29 +122,23 @@ class Display:
         else:
             return f"LONG ({int(amount*100)}%)"
     
-    def get_memory_summary(self):
-        """Get memory usage summary for display."""
-        if not self.memory_monitor:
-            return "RAM: [--]"
-        
-        try:
-            return self.memory_monitor.get_memory_summary()
-        except:
-            return "RAM: [Error]"
-    
     def render_display(self):
         """Render the main display."""
         # Get current time
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
         
-        # Get memory summary
-        memory_summary = self.get_memory_summary()
-        
         # Get audio engine info
+        ambient_info = rhythm_info = None
         ambient_duration = rhythm_duration = 0
         if self.audio_engine:
-            # Try to get durations if files are loaded
+            # Try to get file info if method exists
+            try:
+                ambient_info, rhythm_info = self.audio_engine.get_current_files_info()
+            except:
+                pass
+            
+            # Get durations if files are loaded
             if hasattr(self.audio_engine, 'current_ambient_file') and self.audio_engine.current_ambient_file:
                 _, _, ambient_path = self.audio_engine.current_ambient_file
                 ambient_duration = self.get_audio_duration(ambient_path)
@@ -169,25 +153,30 @@ class Display:
         # Build display
         lines = []
         lines.append("┌" + "─" * (terminal_width - 2) + "┐")
-        
-        # Title line with memory summary
-        title = f"🎹 ROLAND S-1 AMBIENT ENGINE  ⏰ {current_time}"
-        memory_display = memory_summary
-        lines.append(f"│ {title.ljust(terminal_width - 3 - len(memory_display))}{memory_display} │")
-        
+        lines.append(f"│ 🎹 ROLAND S-1 AMBIENT ENGINE  ⏰ {current_time}".ljust(terminal_width - 2) + "│")
         lines.append("├" + "─" * (terminal_width - 2) + "┤")
         
-        # Currently playing files - use stored filenames
-        ambient_name = self.current_ambient_filename
-        rhythm_name = self.current_rhythm_filename
+        # Currently playing files
+        ambient_name = "None"
+        rhythm_name = "None"
+        
+        if ambient_info and 'filename' in ambient_info:
+            ambient_name = ambient_info['filename'][:20]
+        elif hasattr(self.audio_engine, 'current_ambient_file') and self.audio_engine.current_ambient_file:
+            ambient_name = self.audio_engine.current_ambient_file[0][:20]
+        
+        if rhythm_info and 'filename' in rhythm_info:
+            rhythm_name = rhythm_info['filename'][:20]
+        elif hasattr(self.audio_engine, 'current_rhythm_file') and self.audio_engine.current_rhythm_file:
+            rhythm_name = self.audio_engine.current_rhythm_file[0][:20]
         
         # Ambient track
         amb_bar = self._draw_progress_bar(self.ambient_volume)
-        lines.append(f"│ AMBIENT:  {ambient_name:30} {amb_bar:25} │")
+        lines.append(f"│ AMBIENT:  {ambient_name:20} {amb_bar:25} │")
         
         # Rhythm track
         rhy_bar = self._draw_progress_bar(self.rhythm_volume)
-        lines.append(f"│ RHYTHM:   {rhythm_name:30} {rhy_bar:25} │")
+        lines.append(f"│ RHYTHM:   {rhythm_name:20} {rhy_bar:25} │")
         
         lines.append("│" + " " * (terminal_width - 2) + "│")
         
